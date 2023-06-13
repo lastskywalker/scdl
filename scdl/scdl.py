@@ -50,6 +50,7 @@ Options:
                                     even if track has a Downloadable file
     --path [path]                   Use a custom path for downloaded files
     --remove                        Remove any files not downloaded from execution
+    --no-dot                        Remove files and folders with a dot in them that match files and folders without one
     --sync [file]                   Compares an archive file to a playlist and downloads/removes any changed tracks
     --flac                          Convert original files to .flac
     --no-album-tag                  On some player track get the same cover art if from the same album, this prevent it
@@ -240,6 +241,9 @@ def main():
 
     if arguments["--remove"]:
         remove_files()
+
+    if arguments["--no-dot"]:
+        remove_dot_files(config["scdl"]["path"])
 
 
 def validate_url(client: SoundCloud, url: str):
@@ -682,6 +686,44 @@ def download_hls(client: SoundCloud, track: BasicTrack, title: str, playlist_inf
     if stderr:
         logger.error(stderr.decode("utf-8"))
     return (filename, False)
+
+
+def get_likes(self):
+    """
+    Fetches the liked tracks for the user and returns a list of their URLs
+    """
+    url = 'https://api-v2.soundcloud.com/users/' + str(self.myuserid) + '/track_likes?limit=200&client_id=' + self.client_id
+    track_urls = []
+
+    while url:
+        response = self._get_data(url)
+        liked_tracks = response['collection']
+
+        # Add the URL of each liked track to the list
+        for track in liked_tracks:
+            track_url = 'https://soundcloud.com/' + track['track']['user']['permalink'] + '/' + track['track']['permalink']
+            track_urls.append(track_url)
+
+        # Get the URL for the next page of results, if it exists
+        url = response.get('next_href')
+
+    return track_urls
+
+
+def remove_dot_files(path):
+    for dirpath, dirnames, filenames in os.walk(path):
+        for name in dirnames + filenames:
+            if name.startswith('.'):
+                non_dot_name = name[1:]
+                if non_dot_name in dirnames or non_dot_name in filenames:
+                    path_to_remove = os.path.join(dirpath, name)
+                    print(path_to_remove)
+                    if os.path.isfile(path_to_remove):
+                        os.remove(path_to_remove)
+                    else:
+                        shutil.rmtree(path_to_remove)
+# Usage:
+# remove_dot_files('/path/to/your/directory')
 
 
 def download_track(client: SoundCloud, track: BasicTrack, playlist_info=None, exit_on_fail=True, **kwargs):
