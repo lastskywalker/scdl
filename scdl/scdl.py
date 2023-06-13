@@ -151,8 +151,8 @@ def main():
     logger.info("Soundcloud Downloader")
     logger.debug(arguments)
         
-    client_id = arguments["--client-id"] or config["scdl"]["client_id"]
-    token = arguments["--auth-token"] or config["scdl"]["auth_token"]
+    client_id = arguments["--client-id"] or config["scdl"]["client_id"] or os.environ.get('SOUNDCLOUD_CLIENT_ID')
+    token = arguments["--auth-token"] or config["scdl"]["auth_token"] or os.environ.get('SOUNDCLOUD_AUTH_TOKEN')
     
     client = SoundCloud(client_id, token if token else None)
     
@@ -161,6 +161,8 @@ def main():
             logger.error(f"Invalid client_id specified by --client-id argument. Using a dynamically generated client_id...")
         elif config["scdl"]["client_id"]:
             logger.error(f"Invalid client_id in {config_file}. Using a dynamically generated client_id...")
+        elif os.environ.get('SOUNDCLOUD_CLIENT_ID'):
+            logger.error(f"Invalid client_id in environment variable SOUNDCLOUD_CLIENT_ID. Using a dynamically generated client_id...")
         client = SoundCloud(None, token if token else None)
         if not client.is_client_id_valid():
             logger.error("Dynamically generated client_id is not valid")
@@ -169,6 +171,8 @@ def main():
     if (token or arguments["me"]) and not client.is_auth_token_valid():
         if arguments["--auth-token"]:
             logger.error(f"Invalid auth_token specified by --auth-token argument")
+        elif os.environ.get('SOUNDCLOUD_AUTH_TOKEN'):
+            logger.error(f"Invalid auth_toekn stored in environment variable SOUNDCLOUD_AUTH_TOKEN")
         else:
             logger.error(f"Invalid auth_token in {config_file}")
         sys.exit(1)
@@ -226,12 +230,14 @@ def main():
         python_args[key] = value
         
     # change download path
-    path = arguments["--path"] or config["scdl"]["path"]
+    path = arguments["--path"] or config["scdl"]["path"] or os.environ.get('SOUNDCLOUD_MUSIC_PATH')
     if os.path.exists(path):
         os.chdir(path)
     else:
         if arguments["--path"]:
             logger.error(f"Invalid download path '{path}' specified by --path argument")
+        elif os.environ.get('SOUNDCLOUD_MUSIC_PATH'):
+            logger.error(f"Invalid download path '{path}' specified by environment variable SOUNDCLOUD_MUSIC_PATH")
         else:
             logger.error(f"Invalid download path '{path}' in {config_file}")
         sys.exit(1)
@@ -241,9 +247,8 @@ def main():
 
     if arguments["--remove"]:
         remove_files()
-
-    if arguments["--no-dot"]:
-        remove_dot_files(config["scdl"]["path"])
+        if arguments["--no-dot"]:
+            remove_dot_files(config["scdl"]["path"])
 
 
 def validate_url(client: SoundCloud, url: str):
