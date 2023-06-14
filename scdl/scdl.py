@@ -4,10 +4,10 @@
 """scdl allows you to download music from Soundcloud
 
 Usage:
-    scdl (-l <track_url> | me) [-a | -f | -C | -t | -p | -r][-c | --force-metadata]
+    scdl (-l <track_url> | me | -m) [-a | -f | -C | -t | -p | -r][-c | --force-metadata]
     [-n <maxtracks>][-o <offset>][--hidewarnings][--debug | --error][--path <path>]
     [--addtofile][--addtimestamp][--onlymp3][--hide-progress][--min-size <size>]
-    [--max-size <size>][--remove][--no-album-tag][--no-playlist-folder]
+    [--max-size <size>][--remove][--no-dot][--organize][--mix-path][--no-album-tag][--no-playlist-folder]
     [--download-archive <file>][--sync <file>][--extract-artist][--flac][--original-art]
     [--original-name][--no-original][--only-original][--name-format <format>]
     [--strict-playlist][--playlist-name-format <format>][--client-id <id>]
@@ -21,6 +21,8 @@ Options:
     -h --help                       Show this screen
     --version                       Show version
     -l [url]                        URL can be track/playlist/user
+    -m                              Maintenance (used to perform moves/renames and other file tasks
+    --organize                      use with -m if no other tasks need to be accomplished
     -n [maxtracks]                  Download the n last tracks of a playlist according to the creation date
     -s                              Download the stream of a user (token needed)
     -a                              Download all tracks of user (including reposts)
@@ -87,9 +89,10 @@ import traceback
 import urllib.parse
 import warnings
 from dataclasses import asdict
-
+import slugify
 import mutagen
 from mutagen.easymp4 import EasyMP4
+from mutagen.mp3 import MP3
 
 EasyMP4.RegisterTextKey("website", "purl")
 
@@ -151,18 +154,20 @@ def main():
     logger.info("Soundcloud Downloader")
     logger.debug(arguments)
         
-    client_id = arguments["--client-id"] or config["scdl"]["client_id"] or os.environ.get('SOUNDCLOUD_CLIENT_ID')
-    token = arguments["--auth-token"] or config["scdl"]["auth_token"] or os.environ.get('SOUNDCLOUD_AUTH_TOKEN')
+    client_id = arguments["--client-id"] or os.environ.get('SOUNDCLOUD_CLIENT_ID') or config["scdl"]["client_id"]
+    token = arguments["--auth-token"] or os.environ.get('SOUNDCLOUD_AUTH_TOKEN') or config["scdl"]["auth_token"]
     
     client = SoundCloud(client_id, token if token else None)
     
     if not client.is_client_id_valid():
-        if arguments["--client-id"]:
+        if not arguments["--client-id"]:
+            if os.environ.get('SOUNDCLOUD_CLIENT_ID'):
+                logger.error(f"Invalid client_id in environment variable SOUNDCLOUD_CLIENT_ID. Using a dynamically generated client_id...")
+            elif config["scdl"]["client_id"]:
+                logger.error(f"Invalid client_id in {config_file}. Using a dynamically generated client_id...")
+        else:
             logger.error(f"Invalid client_id specified by --client-id argument. Using a dynamically generated client_id...")
-        elif config["scdl"]["client_id"]:
-            logger.error(f"Invalid client_id in {config_file}. Using a dynamically generated client_id...")
-        elif os.environ.get('SOUNDCLOUD_CLIENT_ID'):
-            logger.error(f"Invalid client_id in environment variable SOUNDCLOUD_CLIENT_ID. Using a dynamically generated client_id...")
+
         client = SoundCloud(None, token if token else None)
         if not client.is_client_id_valid():
             logger.error("Dynamically generated client_id is not valid")
@@ -228,27 +233,61 @@ def main():
     for key, value in arguments.items():
         key = key.strip("-").replace("-", "_")
         python_args[key] = value
-        
+
+    #set mix path
+    mix_path = arguments["--mix-path"] or os.environ.get('SOUNDCLOUD_MUSIC_MIX_PATH') or config["scdl"]["mix_path"]
+    if not arguments["--mix-path"]:
+        if os.environ.get('SOUNDCLOUD_MUSIC_MIX_PATH'):
+            logger.info(f"Using download mix path '{mix_path}' from environment variable SOUNDCLOUD_MUSIC_MIX_PATH")
+        elif config["scdl"]["mix_path"]:
+            logger.info(f"Using download mix path '{mix_path}' from scdl config")
+    else:
+        logger.info(f"using mix_path '{mix_path}' from commandline argument")
+    if os.path.exists(mix_path):
+        logger.info(f"{mix_path} ")
+    else:
+        if not arguments["--mix-path"]:
+            if os.environ.get('SOUNDCLOUD_MUSIC_MIX_PATH'):
+                logger.error(
+                    f"Invalid download mix path '{mix_path}' specified by environment variable SOUNDCLOUD_MUSIC_MIX_PATH")
+            elif config["scdl"]["mix_path"]:
+                logger.error(f"Invalid download mix path '{mix_path}' in {config_file}")
+        else:
+            logger.error(f"Invalid download mix path '{mix_path}' specified by --mix-path argument")
+        sys.exit(1)
+    logger.debug("Mixes will be moved to " + os.getcwd() + "...")
+
     # change download path
-    path = arguments["--path"] or config["scdl"]["path"] or os.environ.get('SOUNDCLOUD_MUSIC_PATH')
+    path = arguments["--path"] or os.environ.get('SOUNDCLOUD_MUSIC_PATH') or config["scdl"]["path"]
+    if not arguments["--path"]:
+        if os.environ.get('SOUNDCLOUD_MUSIC_PATH'):
+            logger.info(f"Using download path '{path}' from environment variable SOUNDCLOUD_MUSIC_PATH")
+        elif config["scdl"]["path"]:
+            logger.info(f"Using download path '{path}' from scdl config")
+    else:
+        logger.info(f"using path '{path}' from commandline argument")
     if os.path.exists(path):
         os.chdir(path)
     else:
-        if arguments["--path"]:
-            logger.error(f"Invalid download path '{path}' specified by --path argument")
-        elif os.environ.get('SOUNDCLOUD_MUSIC_PATH'):
-            logger.error(f"Invalid download path '{path}' specified by environment variable SOUNDCLOUD_MUSIC_PATH")
+        if not arguments["--path"]:
+            if os.environ.get('SOUNDCLOUD_MUSIC_PATH'):
+                logger.error(f"Invalid download path '{path}' specified by environment variable SOUNDCLOUD_MUSIC_PATH")
+            elif config["scdl"]["path"]:
+                logger.error(f"Invalid download path '{path}' in {config_file}")
         else:
-            logger.error(f"Invalid download path '{path}' in {config_file}")
+            logger.error(f"Invalid download path '{path}' specified by --path argument")
         sys.exit(1)
-    logger.debug("Downloading to " + os.getcwd() + "...")
-    
     download_url(client, **python_args)
+
 
     if arguments["--remove"]:
         remove_files()
-        if arguments["--no-dot"]:
-            remove_dot_files(config["scdl"]["path"])
+
+    if arguments["--no-dot"]:
+        remove_dot_files(path)
+
+    if arguments["--organize"]:
+        move_long_tracks(path, mix_path)
 
 
 def validate_url(client: SoundCloud, url: str):
@@ -402,7 +441,47 @@ def remove_files():
     files = [f for f in os.listdir(".") if os.path.isfile(f)]
     for f in files:
         if f not in fileToKeep:
+            logger.info(f"removing {f} ")
             os.remove(f)
+
+def remove_dot_files(path):
+    for dirpath, dirnames, filenames in os.walk(path):
+        for name in dirnames + filenames:
+            if name.startswith('.'):
+                non_dot_name = name[1:]
+                if non_dot_name in dirnames or non_dot_name in filenames:
+                    path_to_remove = os.path.join(dirpath, name)
+                    print(path_to_remove)
+                    if os.path.isfile(path_to_remove):
+                        os.remove(path_to_remove)
+                    else:
+                        shutil.rmtree(path_to_remove)
+# Usage:
+# remove_dot_files('/path/to/your/directory')
+
+def move_long_tracks(src_dir, dest_dir, min_duration=20*60):
+    # Iterate over all files in the source directory
+    logger.info(f"moving tracks longer than 20 minutes")
+    for filename in os.listdir(src_dir):
+        # Check if the file is an mp3
+        if not filename.startswith('.'):
+            if filename.endswith('.mp3'):
+                # Get the full path of the file
+                filepath = os.path.join(src_dir, filename)
+                # Get the duration of the mp3 file
+                audio = MP3(filepath)
+                duration = audio.info.length
+                # If the duration is longer than the minimum duration, move the file
+                if duration > min_duration:
+                    shutil.move(filepath, os.path.join(dest_dir, filename))
+
+# Example usage:
+# move_long_tracks('/path/to/source/directory', '/path/to/destination/directory')
+def get_volume_root(path):
+    while not os.path.ismount(path):
+        # Get the parent directory
+        path = os.path.dirname(path)
+    return path
 
 def sync(client: SoundCloud, playlist: BasicAlbumPlaylist, playlist_info, **kwargs):
     """
@@ -509,14 +588,19 @@ def try_utime(path, filetime):
         logger.error("Cannot update utime of file")
 
 def get_filename(track: BasicTrack, original_filename=None, aac=False, playlist_info=None, **kwargs):
-    
+
     username = track.user.username
-    title = track.title.encode("utf-8", "ignore").decode("utf-8")
+    title = f"{username} - {track.title}"
+    #title = track.title
+    title = title.encode("utf-8", "ignore").decode("utf-8")
 
     if kwargs.get("addtofile"):
         if username not in title and "-" not in title:
             title = "{0} - {1}".format(username, title)
             logger.debug('Adding "{0}" to filename'.format(username))
+    if title.count('-') > 1:
+        title = title.split('-', 1)[1].strip()
+        logger.debug('Removing uploader name "{0}" from filename'.format(username))
 
     timestamp = str(int(track.created_at.timestamp()))
     if kwargs.get("addtimestamp"):
@@ -715,20 +799,7 @@ def get_likes(self):
     return track_urls
 
 
-def remove_dot_files(path):
-    for dirpath, dirnames, filenames in os.walk(path):
-        for name in dirnames + filenames:
-            if name.startswith('.'):
-                non_dot_name = name[1:]
-                if non_dot_name in dirnames or non_dot_name in filenames:
-                    path_to_remove = os.path.join(dirpath, name)
-                    print(path_to_remove)
-                    if os.path.isfile(path_to_remove):
-                        os.remove(path_to_remove)
-                    else:
-                        shutil.rmtree(path_to_remove)
-# Usage:
-# remove_dot_files('/path/to/your/directory')
+
 
 
 def download_track(client: SoundCloud, track: BasicTrack, playlist_info=None, exit_on_fail=True, **kwargs):
